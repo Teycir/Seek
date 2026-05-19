@@ -231,7 +231,7 @@ Browser / curl
 └──┬──────────────────────────────────┘
    │
    ├─► Layer 1+2 (parallel, 12 sources):
-   │     InternetDB · IPinfo · BGPView · RDAP · crt.sh · PassiveDNS · Robtex
+   │     InternetDB · IPinfo · RIPE stat · RDAP · crt.sh · HackerTarget · Robtex
    │     URLhaus · ThreatFox · MalwareBazaar · Feodo · SSLBL
    ├─► Layer 3 (after L1): NVD CVE enrichment (only if vulns found, batched 10-at-a-time)
    └─► Layer 4 (parallel): GrayHatWarfare · Wayback (domain queries only)
@@ -270,11 +270,11 @@ Force-refresh any query with `?refresh=1` to bypass the KV cache and pull live d
 | Layer | Source | What it provides | Auth required |
 |---|---|---|---|
 | 1 | InternetDB | Open ports, CPEs, CVE IDs | No |
-| 1 | IPinfo / ip-api | Geo, ISP, ASN, hosting/proxy/mobile | No |
-| 1 | BGPView | BGP prefixes, upstreams, peers, RIR | No |
+| 1 | IPinfo | Geo, ISP, ASN, anycast flag | No |
+| 1 | RIPE stat | BGP prefixes, ASN holder, RIR | No |
 | 1 | RDAP | Registration, contacts, nameservers, CIDR | No |
 | 2 | crt.sh | Certificate history, SANs, issuer chain | No |
-| 2 | PassiveDNS | Historical DNS records | No |
+| 2 | HackerTarget | Passive DNS — reverse IP & hostsearch | No |
 | 2 | Robtex | Reverse/forward DNS, AS info | No |
 | 2 | URLhaus | Malware distribution URLs | `ABUSECH_KEY` |
 | 2 | ThreatFox | IOC database | `ABUSECH_KEY` |
@@ -764,11 +764,11 @@ GitHub: [@Teycir](https://github.com/Teycir)
 ## Acknowledgments
 
 - [InternetDB](https://internetdb.shodan.io) (Shodan)
-- [IPinfo](https://ipinfo.io) / [ip-api](https://ip-api.com)
-- [BGPView](https://bgpview.io)
+- [IPinfo](https://ipinfo.io)
+- [RIPE stat](https://stat.ripe.net)
 - [RDAP](https://rdap.org)
 - [crt.sh](https://crt.sh)
-- [PassiveDNS](https://passivedns.cn)
+- [HackerTarget](https://hackertarget.com)
 - [Robtex](https://www.robtex.com)
 - [abuse.ch](https://abuse.ch) — URLhaus, ThreatFox, MalwareBazaar, Feodo, SSLBL
 - [NVD](https://nvd.nist.gov) (NIST)
