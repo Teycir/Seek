@@ -60,6 +60,7 @@ export async function generateMetadata({
 type FetchError =
   | { kind: 'rate-limited'; resetInSeconds: number }
   | { kind: 'server-busy'; retryAfterSeconds: number }
+  | { kind: 'kv-limit' }
   | { kind: 'invalid' }
   | { kind: 'internal' }
 
@@ -79,6 +80,10 @@ async function fetchResult(rawQuery: string, forceRefresh = false): Promise<Fetc
     // runLookup is an internal call and doesn't throw HTTP errors — but
     // preserve the shape so the page can show a generic fallback.
     console.error('[fetchResult] runLookup failed:', err)
+    const msg = err instanceof Error ? err.message : String(err)
+    if (msg.includes('KV put() limit exceeded')) {
+      return { ok: false, error: { kind: 'kv-limit' } }
+    }
     return { ok: false, error: { kind: 'internal' } }
   }
 }
@@ -901,6 +906,31 @@ export default async function HostPage({
       )
     }
 
+    // kv write limit — transient, resets at midnight UTC
+    if (error.kind === 'kv-limit') {
+      return (
+        <main className="flex min-h-screen flex-col items-center justify-center bg-neutral-950 px-4">
+          <div className="max-w-md w-full rounded-xl border border-amber-800/40 bg-amber-950/20 p-8 text-center space-y-4">
+            <div className="text-3xl">⏳</div>
+            <h1 className="text-lg font-semibold text-amber-300 font-mono">Daily limit reached</h1>
+            <p className="text-sm text-neutral-400">
+              The service has hit its Cloudflare KV write quota for today. This resets automatically at midnight UTC.
+            </p>
+            <p className="text-sm text-neutral-400">
+              IP lookups still work — if you know the IP address of{' '}
+              <span className="font-mono text-neutral-200">{decodeURIComponent(rawQuery)}</span>,
+              you can look it up directly instead.
+            </p>
+            <div className="pt-2">
+              <a href="/" className="text-xs text-neutral-600 hover:text-neutral-400 transition-colors">
+                ← back to search
+              </a>
+            </div>
+          </div>
+        </main>
+      )
+    }
+
     // internal error — generic fallback (don't 404, it might be transient)
     return (
       <main className="flex min-h-screen flex-col items-center justify-center bg-neutral-950 px-4">
@@ -908,12 +938,8 @@ export default async function HostPage({
           <div className="text-3xl">⚡</div>
           <h1 className="text-lg font-semibold text-neutral-200 font-mono">Lookup failed</h1>
           <p className="text-sm text-neutral-400">
-            Something went wrong. This is usually caused by one of the following:
+            An unexpected error occurred. This is usually transient — retry in a moment.
           </p>
-          <ul className="text-left text-sm text-neutral-400 space-y-2 bg-neutral-800/50 rounded-lg px-4 py-3">
-            <li className="flex gap-2"><span className="text-amber-400 shrink-0">⚠</span><span><strong className="text-neutral-200">Browser shields</strong> — Brave Shields or an ad blocker is interfering. Disable it for this site and retry.</span></li>
-            <li className="flex gap-2"><span className="text-neutral-500 shrink-0">·</span><span>A network or upstream API timeout — usually resolves on retry.</span></li>
-          </ul>
           <a
             href={`/host/${encodeURIComponent(rawQuery)}`}
             className="inline-block mt-2 rounded-lg border border-neutral-700 px-5 py-2

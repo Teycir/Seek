@@ -126,7 +126,11 @@ async function resolveDomainToIP(
   const ip = (await doQuery('A')) ?? (await doQuery('AAAA'))
 
   if (ip) {
-    await kv.put(cacheKey, ip, { expirationTtl: 300 })
+    try {
+      await kv.put(cacheKey, ip, { expirationTtl: 300 })
+    } catch (err) {
+      console.warn('[lookup] resolveDomainToIP: KV write failed (ignoring):', err)
+    }
   } else {
     console.error(`[lookup] DNS resolution failed for ${domain} (A and AAAA both returned nothing)`)
   }

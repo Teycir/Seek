@@ -8,3 +8,4 @@ node_modules
 # Build artifacts
 build.log
 tsconfig.tsbuildinfo
+.dev.vars
