@@ -12,14 +12,11 @@ export const TTL = {
   CORE:       60 * 60,           // 1 hour   — internetdb, ipapi
   BLOCKLIST:  60 * 60,           //           Feodo + SSLBL bulk downloads
   ABUSECH:    60 * 30,           // 30 minutes
+  DNS:        60 * 5,            // 5 minutes — DNS resolution
 } as const
 
 // ─── Cache key helpers ────────────────────────────────────────────────────────
 
-/**
- * All cache keys in one place. Keeps the key format consistent across
- * source modules and avoids ad-hoc string construction in each file.
- */
 export const CacheKey = {
   internetdb:  (ip: string)      => `internetdb:${ip}`,
   ipapi:       (ip: string)      => `ipapi:${ip}`,
@@ -31,7 +28,7 @@ export const CacheKey = {
   whois:       (domain: string)  => `whois:${domain}`,
   passivedns:  (query: string)   => `passivedns:${query}`,
   robtex:      (ip: string)      => `robtex:${ip}`,
-  malwarebazaar: (hash: string)   => `malwarebazaar:${hash}`,
+  malwarebazaar: (hash: string)  => `malwarebazaar:${hash}`,
   urlhaus:     (query: string)   => `urlhaus:${query}`,
   threatfox:   (query: string)   => `threatfox:${query}`,
   feodoList:   ()                => 'feodo:blocklist',
@@ -45,51 +42,59 @@ export const CacheKey = {
   rdapBootIP:  ()                => 'rdap:boot:ip',
 } as const
 
-// ─── KV read / write ──────────────────────────────────────────────────────────
+// ─── D1 cache read / write ────────────────────────────────────────────────────
+//
+// Source response caches live in D1 (not KV) to preserve KV write quota for
+// hot-path counters (rate limiting, concurrency, circuit breakers).
+// D1 is well-suited here: values are written once, read occasionally, and
+// are large enough that KV's 1 write = 1 quota unit cost adds up fast.
+//
+// TTL is enforced manually via the `expires_at` column — D1 has no native TTL.
+// Expired rows are returned as a miss and lazily overwritten on next fetch.
+// A periodic cleanup is not strictly necessary (expired rows are ignored),
+// but can be added as a cron if the table grows too large.
 
 /**
- * Read a JSON value from KV. Returns null on miss, parse error, or when
- * `bypass` is true (used by the ?refresh=1 force-refresh path).
+ * Read a JSON value from D1 cache. Returns null on miss, expiry, or parse error.
+ * Pass `bypass = true` for the ?refresh=1 force-refresh path.
  */
 export async function cacheGet<T>(
-  kv: KVNamespace,
+  db: D1Database,
   key: string,
   bypass = false,
 ): Promise<T | null> {
   if (bypass) return null
   try {
-    const raw = await kv.get(key)
-    return raw ? (JSON.parse(raw) as T) : null
+    const now = Math.floor(Date.now() / 1000)
+    const row = await db
+      .prepare('SELECT value FROM cache WHERE key = ? AND expires_at > ?')
+      .bind(key, now)
+      .first<{ value: string }>()
+    return row ? (JSON.parse(row.value) as T) : null
   } catch (err) {
-    console.error(`[cache] get failed key=${key}`, err)
+    console.error(`[cache] D1 get failed key=${key}`, err)
     return null
   }
 }
 
 /**
- * Write a JSON value to KV with an expiry TTL in seconds.
+ * Write a JSON value to D1 cache with a TTL in seconds.
+ * Uses INSERT OR REPLACE so repeated writes for the same key are idempotent.
  * Swallows errors — a failed cache write should never break a response.
- *
- * KV write budget (Cloudflare free tier): 1,000 writes/day.
- * Target utilisation: ≤ 50 % (≤ 500 writes/day) to maintain a safety
- * margin for burst traffic.  Achieved by:
- *   • Long TTLs (CVE 30 days, BGP/RDAP 24 h) → most requests are cache hits
- *   • Never caching errors → avoids "poison" entries that must be re-fetched
- *   • Per-IP rate limiting → prevents a single user exhausting write quota
- *
- * If write quota pressure increases, consider:
- *   • Coalescing multi-source responses into a single KV key
- *   • Switching high-frequency keys (CORE, ABUSECH) to R2 object storage
  */
 export async function cachePut<T>(
-  kv: KVNamespace,
+  db: D1Database,
   key: string,
   value: T,
   ttl: number,
 ): Promise<void> {
   try {
-    await kv.put(key, JSON.stringify(value), { expirationTtl: ttl })
+    const expiresAt = Math.floor(Date.now() / 1000) + ttl
+    await db
+      .prepare('INSERT OR REPLACE INTO cache (key, value, expires_at) VALUES (?, ?, ?)')
+      .bind(key, JSON.stringify(value), expiresAt)
+      .run()
   } catch (err) {
-    console.error(`[cache] put failed key=${key}`, err)
+    console.error(`[cache] D1 put failed key=${key}`, err)
   }
 }

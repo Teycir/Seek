@@ -17,12 +17,12 @@ const MAX_DNS_RECORDS = 100
 
 export async function fetchRobtex(
   query: LookupQuery,
-  kv: KVNamespace,
+  db: D1Database,
 ): Promise<SourceResult<RobtexResult>> {
   if (query.type !== 'ip') return skipped(SOURCE)
 
   const cacheKey = CacheKey.robtex(query.normalised)
-  const cached = await cacheGet<RobtexResult>(kv, cacheKey, query.forceRefresh)
+  const cached = await cacheGet<RobtexResult>(db, cacheKey, query.forceRefresh)
   if (cached) return ok(SOURCE, cached, true)
 
   try {
@@ -66,7 +66,7 @@ export async function fetchRobtex(
       })),
     }
 
-    await cachePut(kv, cacheKey, data, TTL.ROBTEX)
+    await cachePut(db, cacheKey, data, TTL.ROBTEX)
     return ok(SOURCE, data)
   } catch (err) {
     console.error(`[${SOURCE}] fetch failed for ${query.normalised}`, err)

@@ -54,12 +54,12 @@ async function doFetch(domain: string, key: string): Promise<BucketResult[]> {
 
 export async function fetchGHW(
   domain: string,
-  kv: KVNamespace,
+  db: D1Database,
   ring: KeyRing,
   forceRefresh = false,
 ): Promise<SourceResult<BucketResult[]>> {
   const cacheKey = CacheKey.ghwBuckets(domain)
-  const cached = await cacheGet<BucketResult[]>(kv, cacheKey, forceRefresh)
+  const cached = await cacheGet<BucketResult[]>(db, cacheKey, forceRefresh)
   if (cached) return ok(SOURCE, cached, true)
 
   const key = await ring.nextHealthy()
@@ -70,7 +70,7 @@ export async function fetchGHW(
 
   try {
     const data = await doFetch(domain, key)
-    await cachePut(kv, cacheKey, data, TTL.GHW)
+    await cachePut(db, cacheKey, data, TTL.GHW)
     return ok(SOURCE, data)
   } catch (err: unknown) {
     const status = (err as { status?: number }).status
@@ -81,7 +81,7 @@ export async function fetchGHW(
       if (next) {
         try {
           const data = await doFetch(domain, next)
-          await cachePut(kv, cacheKey, data, TTL.GHW)
+          await cachePut(db, cacheKey, data, TTL.GHW)
           return ok(SOURCE, data)
         } catch (retryErr) {
           const retryStatus = (retryErr as { status?: number }).status
@@ -103,9 +103,9 @@ export async function fetchGHW(
  */
 export async function fetchGHWForQuery(
   query: LookupQuery,
-  kv: KVNamespace,
+  db: D1Database,
   ring: KeyRing,
 ): Promise<SourceResult<BucketResult[]>> {
   if (query.type !== 'domain') return skipped(SOURCE)
-  return fetchGHW(query.normalised, kv, ring, query.forceRefresh)
+  return fetchGHW(query.normalised, db, ring, query.forceRefresh)
 }

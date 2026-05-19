@@ -24,12 +24,12 @@ function isInternetDBResult(v: unknown): v is InternetDBResult {
 
 export async function fetchInternetDB(
   query: LookupQuery,
-  kv: KVNamespace,
+  db: D1Database,
 ): Promise<SourceResult<InternetDBResult>> {
   if (query.type !== 'ip') return skipped(SOURCE)
 
   const cacheKey = CacheKey.internetdb(query.normalised)
-  const cached = await cacheGet<InternetDBResult>(kv, cacheKey, query.forceRefresh)
+  const cached = await cacheGet<InternetDBResult>(db, cacheKey, query.forceRefresh)
   if (cached) return ok(SOURCE, cached, true)
 
   try {
@@ -48,7 +48,7 @@ export async function fetchInternetDB(
         vulns: [],
         cpes: [],
       }
-      await cachePut(kv, cacheKey, empty, TTL.CORE)
+      await cachePut(db, cacheKey, empty, TTL.CORE)
       return ok(SOURCE, empty)
     }
 
@@ -58,7 +58,7 @@ export async function fetchInternetDB(
     }
 
     const data = await safeJson<InternetDBResult>(res, isInternetDBResult, SOURCE)
-    await cachePut(kv, cacheKey, data, TTL.CORE)
+    await cachePut(db, cacheKey, data, TTL.CORE)
     return ok(SOURCE, data)
   } catch (err) {
     console.error(`[${SOURCE}] fetch failed for ${query.normalised}`, err)

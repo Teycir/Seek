@@ -44,13 +44,13 @@ async function abusePost<T>(
 
 export async function fetchURLhaus(
   query: LookupQuery,
-  kv: KVNamespace,
+  db: D1Database,
   apiKey: string,
 ): Promise<SourceResult<URLhausResult>> {
   const SOURCE = 'urlhaus'
   const cacheKey = CacheKey.urlhaus(query.normalised)
 
-  const cached = await cacheGet<URLhausResult>(kv, cacheKey, query.forceRefresh)
+  const cached = await cacheGet<URLhausResult>(db, cacheKey, query.forceRefresh)
   if (cached) return ok(SOURCE, cached, true)
 
   try {
@@ -59,7 +59,7 @@ export async function fetchURLhaus(
       { host: query.normalised },
       apiKey,
     )
-    await cachePut(kv, cacheKey, data, TTL.ABUSECH)
+    await cachePut(db, cacheKey, data, TTL.ABUSECH)
     return ok(SOURCE, data)
   } catch (err) {
     console.error(`[${SOURCE}] fetch failed for ${query.normalised}`, err)
@@ -71,13 +71,13 @@ export async function fetchURLhaus(
 
 export async function fetchThreatFox(
   query: LookupQuery,
-  kv: KVNamespace,
+  db: D1Database,
   apiKey: string,
 ): Promise<SourceResult<ThreatFoxResult>> {
   const SOURCE = 'threatfox'
   const cacheKey = CacheKey.threatfox(query.normalised)
 
-  const cached = await cacheGet<ThreatFoxResult>(kv, cacheKey, query.forceRefresh)
+  const cached = await cacheGet<ThreatFoxResult>(db, cacheKey, query.forceRefresh)
   if (cached) return ok(SOURCE, cached, true)
 
   try {
@@ -100,7 +100,7 @@ export async function fetchThreatFox(
         typeof v === 'object' && v !== null && 'query_status' in (v as object),
       'threatfox',
     )
-    await cachePut(kv, cacheKey, data, TTL.ABUSECH)
+    await cachePut(db, cacheKey, data, TTL.ABUSECH)
     return ok(SOURCE, data)
   } catch (err) {
     console.error(`[${SOURCE}] fetch failed for ${query.normalised}`, err)
@@ -115,7 +115,7 @@ export async function fetchThreatFox(
 
 export async function fetchMalwareBazaar(
   query: LookupQuery,
-  kv: KVNamespace,
+  db: D1Database,
   apiKey: string,
   hash?: string,
 ): Promise<SourceResult<MalwareBazaarResult>> {
@@ -123,7 +123,7 @@ export async function fetchMalwareBazaar(
   const lookupValue = hash ?? query.normalised
   const cacheKey = CacheKey.malwarebazaar(lookupValue)
 
-  const cached = await cacheGet<MalwareBazaarResult>(kv, cacheKey, query.forceRefresh)
+  const cached = await cacheGet<MalwareBazaarResult>(db, cacheKey, query.forceRefresh)
   if (cached) return ok(SOURCE, cached, true)
 
   try {
@@ -138,7 +138,7 @@ export async function fetchMalwareBazaar(
       body,
       apiKey,
     )
-    await cachePut(kv, cacheKey, data, TTL.ABUSECH)
+    await cachePut(db, cacheKey, data, TTL.ABUSECH)
     return ok(SOURCE, data)
   } catch (err) {
     console.error(`[${SOURCE}] fetch failed for ${lookupValue}`, err)

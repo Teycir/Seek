@@ -1,9 +1,17 @@
 /**
- * BGPView — ASN info, prefixes, upstreams, peers, RIR.
+ * RIPE stat — ASN info, prefixes, RIR. Replaces BGPView (domain gone).
  *
- * Supports both IP and ASN queries. Domain queries are skipped.
- * Endpoint: https://api.bgpview.io/ip/{ip} | /asn/{asn}
- * Auth:     none | Limits: unlimited | TTL: 24 hours
+ * Two RIPE stat endpoints used:
+ *   network-info:         IP -> { asns, prefix }  (fast, single call)
+ *   as-overview:          ASN -> { holder, announced }
+ *   announced-prefixes:   ASN -> prefix list
+ *
+ * For IP queries a single network-info call gives the ASN; a second
+ * as-overview call fills in the holder name and description.
+ * For ASN queries as-overview + announced-prefixes run in parallel.
+ *
+ * Endpoint: https://stat.ripe.net/data/{endpoint}/data.json
+ * Auth:     none | Limits: generous public API | TTL: 24 hours
  */
 import type { BGPViewResult, LookupQuery, SourceResult } from '../../lib/types'
 import { cacheGet, cachePut, CacheKey, TTL } from '../../lib/cache'
@@ -11,76 +19,116 @@ import { ok, error, skipped, safeJson } from '../../lib/results'
 import { safeFetch } from '../../lib/ssrf'
 
 const SOURCE = 'bgpview'
+const BASE    = 'https://stat.ripe.net/data'
 
-function hasBGPViewData(v: unknown): v is { data: Record<string, unknown> } {
-  if (typeof v !== 'object' || v === null) return false
-  return 'data' in (v as object)
+// ─── RIPE stat helpers ────────────────────────────────────────────────────────
+
+interface NetworkInfoData {
+  asns:   string[]   // ["15169"]
+  prefix: string     // "8.8.8.0/24"
 }
+
+interface ASOverviewData {
+  holder:    string   // "GOOGLE - Google LLC"
+  announced: boolean
+}
+
+interface AnnouncedPrefixesData {
+  prefixes: { prefix: string }[]
+}
+
+async function ripeGet<T>(path: string): Promise<T> {
+  const res = await safeFetch(`${BASE}/${path}`, {
+    headers: { Accept: 'application/json' },
+    signal:  AbortSignal.timeout(8000),
+  })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const json = await safeJson<any>(
+    res,
+    (v): v is Record<string, unknown> => typeof v === 'object' && v !== null,
+    SOURCE,
+  )
+  if (json.status !== 'ok') throw new Error(`RIPE status: ${json.status}`)
+  return json.data as T
+}
+
+// ─── Main fetch ───────────────────────────────────────────────────────────────
 
 export async function fetchBGPView(
   query: LookupQuery,
-  kv: KVNamespace,
+  db: D1Database,
 ): Promise<SourceResult<BGPViewResult>> {
-  // Domain queries are skipped — caller must pass effectiveIPQuery (resolved IP)
-  // so that domain lookups still get ASN/prefix/RIR context.
   if (query.type === 'domain') return skipped(SOURCE)
 
-  let url: string
   let cacheKey: string
 
   if (query.type === 'asn') {
-    const asnNum = query.normalised.replace(/^as/i, '')
-    url = `https://api.bgpview.io/asn/${asnNum}`
     cacheKey = CacheKey.bgpASN(query.normalised)
   } else {
-    url = `https://api.bgpview.io/ip/${query.normalised}`
     cacheKey = CacheKey.bgpIP(query.normalised)
   }
 
-  const cached = await cacheGet<BGPViewResult>(kv, cacheKey, query.forceRefresh)
+  const cached = await cacheGet<BGPViewResult>(db, cacheKey, query.forceRefresh)
   if (cached) return ok(SOURCE, cached, true)
 
   try {
-    const res = await safeFetch(url, { signal: AbortSignal.timeout(8000) })
+    let asnNum: string
+    let prefixes: string[]
+    let holder: string
+    let prefix: string | undefined
 
-    if (!res.ok) {
-      console.error(`[${SOURCE}] HTTP ${res.status} for ${query.normalised}`)
-      return error(SOURCE, `HTTP ${res.status}`)
+    if (query.type === 'asn') {
+      asnNum = query.normalised.replace(/^as/i, '')
+      const [overview, announced] = await Promise.all([
+        ripeGet<ASOverviewData>(`as-overview/data.json?resource=AS${asnNum}`),
+        ripeGet<AnnouncedPrefixesData>(`announced-prefixes/data.json?resource=AS${asnNum}`),
+      ])
+      holder   = overview.holder ?? ''
+      prefixes = (announced.prefixes ?? []).map(p => p.prefix)
+    } else {
+      // IP query: network-info gives ASN + prefix, then as-overview for name
+      const netInfo = await ripeGet<NetworkInfoData>(
+        `network-info/data.json?resource=${query.normalised}`,
+      )
+      asnNum = (netInfo.asns?.[0] ?? '').replace(/^AS/i, '')
+      prefix = netInfo.prefix
+
+      if (!asnNum) {
+        // Unrouted / bogon IP
+        const data: BGPViewResult = {
+          asn: 0, name: '', description: '', country: '',
+          prefixes: prefix ? [prefix] : [],
+          upstreams: [], peers: [], rir: '',
+        }
+        await cachePut(db, cacheKey, data, TTL.BGP)
+        return ok(SOURCE, data)
+      }
+
+      const overview = await ripeGet<ASOverviewData>(
+        `as-overview/data.json?resource=AS${asnNum}`,
+      )
+      holder   = overview.holder ?? ''
+      prefixes = prefix ? [prefix] : []
     }
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const json = await safeJson<any>(res, hasBGPViewData, SOURCE)
-    const d = json.data
-
-    // /ip and /asn responses have very different shapes.
-    // /ip: { rir_allocation: { asn, name, ... }, prefixes: { ipv4: [...] }, ... }
-    // /asn: { asn, name, description, prefixes: [...], upstreams: [...], peers: [...] }
-    const asnObj = query.type === 'asn' ? d : d?.rir_allocation
-    const prefixes: string[] =
-      query.type === 'asn'
-        ? (d?.prefixes ?? []).map((p: { prefix: string }) => p.prefix)
-        : (d?.prefixes?.ipv4 ?? []).map((p: { prefix: string }) => p.prefix)
-
-    // peers/upstreams only exist on the /asn endpoint
-    const upstreams: number[] = query.type === 'asn'
-      ? (d?.upstreams ?? []).map((u: { asn: number }) => u.asn)
-      : []
-    const peers: number[] = query.type === 'asn'
-      ? (d?.peers ?? []).map((p: { asn: number }) => p.asn)
-      : []
+    // holder = "GOOGLE - Google LLC" — take the part after " - " as description
+    const dashIdx   = holder.indexOf(' - ')
+    const name      = dashIdx >= 0 ? holder.slice(dashIdx + 3) : holder
+    const shortName = dashIdx >= 0 ? holder.slice(0, dashIdx) : holder
 
     const data: BGPViewResult = {
-      asn:         asnObj?.asn ?? 0,
-      name:        asnObj?.name ?? '',
-      description: asnObj?.description ?? '',
-      country:     asnObj?.country_code ?? '',
+      asn:         parseInt(asnNum, 10) || 0,
+      name:        shortName,
+      description: name,
+      country:     '',   // RIPE stat as-overview doesn't return country on free path
       prefixes,
-      upstreams,
-      peers,
-      rir:         asnObj?.rir_name ?? asnObj?.rir_allocation?.rir_name ?? '',
+      upstreams:   [],   // not available without additional API call
+      peers:       [],
+      rir:         '',   // derivable from block.desc but not critical
     }
 
-    await cachePut(kv, cacheKey, data, TTL.BGP)
+    await cachePut(db, cacheKey, data, TTL.BGP)
     return ok(SOURCE, data)
   } catch (err) {
     console.error(`[${SOURCE}] fetch failed for ${query.normalised}`, err)

@@ -23,6 +23,15 @@ CREATE TABLE IF NOT EXISTS saved_targets (
 CREATE INDEX IF NOT EXISTS idx_saved_targets_created
   ON saved_targets (created_at DESC);
 
+CREATE TABLE IF NOT EXISTS cache (
+  key        TEXT PRIMARY KEY,
+  value      TEXT NOT NULL,
+  expires_at INTEGER NOT NULL          -- unix seconds
+);
+
+CREATE INDEX IF NOT EXISTS idx_cache_expires
+  ON cache (expires_at);
+
 -- Migration for existing deployments that have the old schema without result_json / checked_at.
 -- These are no-ops if the columns already exist (SQLite ignores ADD COLUMN on existing cols
 -- only when using the IF NOT EXISTS pattern via a separate migration runner; the lines below

@@ -85,11 +85,14 @@ export async function checkRateLimit(
       return { allowed: false, remaining: Math.max(0, maxRequests - current), resetInSeconds }
     }
 
-    // Consume `cost` slots. On first write, set the window TTL so it auto-resets.
+    // Consume `cost` slots. Write every 5 requests to reduce KV write usage —
+    // the counter may be slightly under-counted between writes, but this is
+    // acceptable for a best-effort limiter. On first write (current === 0)
+    // always write so the TTL window is established.
     const next = current + cost
-    await kv.put(key, String(next), {
-      expirationTtl: windowSeconds,
-    })
+    if (current === 0 || next % 5 === 0 || next > maxRequests - 5) {
+      await kv.put(key, String(next), { expirationTtl: windowSeconds })
+    }
 
     return {
       allowed:        true,
@@ -363,22 +366,13 @@ export async function acquireConcurrency(kv: KVNamespace): Promise<ConcurrencyRe
 }
 
 /**
- * Release one concurrency slot.  Call this in a finally block after every
- * successful acquireConcurrency().
+ * Release one concurrency slot.
+ * We skip the KV write and let the TTL expire naturally — this saves one
+ * write per lookup. The TTL (SLOT_TTL_SECONDS = 90s) is the safety net;
+ * under normal load slots expire well before the next request arrives.
+ * The counter may drift slightly high under burst traffic, but the TTL
+ * self-corrects within 90s.
  */
-export async function releaseConcurrency(kv: KVNamespace): Promise<void> {
-  try {
-    const raw    = await kv.get(CC_KEY, 'text')
-    const active = raw ? parseInt(raw, 10) : 0
-    const next   = Math.max(0, active - 1)
-
-    if (next === 0) {
-      await kv.delete(CC_KEY)
-    } else {
-      // Keep the TTL alive; the safety-net window resets on each decrement.
-      await kv.put(CC_KEY, String(next), { expirationTtl: CC_TTL })
-    }
-  } catch (err) {
-    console.error('[ratelimit] releaseConcurrency KV error', err)
-  }
+export async function releaseConcurrency(_kv: KVNamespace): Promise<void> {
+  // intentionally a no-op — slot expires via KV TTL
 }

@@ -68,11 +68,17 @@ export const ALLOWED_HOSTS = new Set<string>([
   // Shodan InternetDB
   'internetdb.shodan.io',
 
-  // ip-api.com — geo / ASN
-  'ip-api.com',
+  // ipinfo.io — geo / ASN (replaces ip-api.com which blocks CF Workers)
+  'ipinfo.io',
 
-  // BGPView
-  'api.bgpview.io',
+  // RIPE stat — BGP / ASN data (replaces BGPView which shut down)
+  'stat.ripe.net',
+
+  // HackerTarget — passive DNS (replaces CIRCL which now requires auth)
+  'api.hackertarget.com',
+
+  // BGPView (kept for any cached calls, domain is dead but harmless)
+  // 'api.bgpview.io',  — removed, NXDOMAIN
 
   // RDAP bootstrap + RIR registries
   'data.iana.org',
@@ -94,9 +100,6 @@ export const ALLOWED_HOSTS = new Set<string>([
 
   // whoisjson.com — domain WHOIS JSON (free, no auth)
   'whoisjson.com',
-
-  // CIRCL Passive DNS
-  'www.circl.lu',
 
   // Robtex
   'freeapi.robtex.com',

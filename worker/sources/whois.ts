@@ -76,12 +76,12 @@ function normalise(raw: any, domain: string): WhoisResult {
 
 export async function fetchWhois(
   query: LookupQuery,
-  kv: KVNamespace,
+  db: D1Database,
 ): Promise<SourceResult<WhoisResult>> {
   if (query.type !== 'domain') return skipped(SOURCE)
 
   const cacheKey = CacheKey.whois(query.normalised)
-  const cached = await cacheGet<WhoisResult>(kv, cacheKey, query.forceRefresh)
+  const cached = await cacheGet<WhoisResult>(db, cacheKey, query.forceRefresh)
   if (cached) return ok(SOURCE, cached, true)
 
   try {
@@ -115,7 +115,7 @@ export async function fetchWhois(
     const data = raw.whois ?? raw
     const result = normalise(data, query.normalised)
 
-    await cachePut(kv, cacheKey, result, TTL.RDAP) // 24-hour TTL — same as RDAP
+    await cachePut(db, cacheKey, result, TTL.RDAP) // 24-hour TTL — same as RDAP
     return ok(SOURCE, result)
   } catch (err) {
     console.error(`[${SOURCE}] fetch failed for ${query.normalised}`, err)

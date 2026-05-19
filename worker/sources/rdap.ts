@@ -23,9 +23,9 @@ interface BootstrapEntry {
 
 async function getRDAPBaseForDomain(
   tld: string,
-  kv: KVNamespace,
+  db: D1Database,
 ): Promise<string | null> {
-  let boot = await cacheGet<BootstrapEntry>(kv, CacheKey.rdapBootDNS())
+  let boot = await cacheGet<BootstrapEntry>(db, CacheKey.rdapBootDNS())
   if (!boot) {
     try {
       const res = await safeFetch('https://data.iana.org/rdap/dns.json', {
@@ -38,7 +38,7 @@ async function getRDAPBaseForDomain(
           typeof v === 'object' && v !== null && Array.isArray((v as BootstrapEntry).services),
         'rdap-dns-bootstrap',
       )
-      await cachePut(kv, CacheKey.rdapBootDNS(), boot, TTL.RDAP)
+      await cachePut(db, CacheKey.rdapBootDNS(), boot, TTL.RDAP)
     } catch (err) {
       console.error('[rdap] getRDAPBaseForDomain bootstrap fetch failed:', err)
       return null
@@ -52,7 +52,7 @@ async function getRDAPBaseForDomain(
 
 async function getRDAPBaseForIP(
   ip: string,
-  kv: KVNamespace,
+  db: D1Database,
 ): Promise<string> {
   // Choose bootstrap file based on address family
   const isIPv6 = ip.includes(':')
@@ -64,7 +64,7 @@ async function getRDAPBaseForIP(
     ? 'https://rdap.db.ripe.net/'          // RIPE is the most common IPv6 RIR
     : 'https://rdap.arin.net/registry/'
 
-  let boot = await cacheGet<BootstrapEntry>(kv, cacheKey)
+  let boot = await cacheGet<BootstrapEntry>(db, cacheKey)
   if (!boot) {
     try {
       const res = await safeFetch(bootstrapUrl, {
@@ -77,7 +77,7 @@ async function getRDAPBaseForIP(
             typeof v === 'object' && v !== null && Array.isArray((v as BootstrapEntry).services),
           'rdap-ip-bootstrap',
         )
-        await cachePut(kv, cacheKey, boot, TTL.RDAP)
+        await cachePut(db, cacheKey, boot, TTL.RDAP)
       }
     } catch (err) {
       console.error('[rdap] getRDAPBaseForIP bootstrap fetch failed:', err)
@@ -175,7 +175,7 @@ function normaliseDomain(json: any): RDAPResult {
 
 export async function fetchRDAP(
   query: LookupQuery,
-  kv: KVNamespace,
+  db: D1Database,
 ): Promise<SourceResult<RDAPResult>> {
   if (query.type === 'asn') return skipped(SOURCE)
 
@@ -183,18 +183,18 @@ export async function fetchRDAP(
     ? CacheKey.rdapIP(query.normalised)
     : CacheKey.rdapDomain(query.normalised)
 
-  const cached = await cacheGet<RDAPResult>(kv, cacheKey, query.forceRefresh)
+  const cached = await cacheGet<RDAPResult>(db, cacheKey, query.forceRefresh)
   if (cached) return ok(SOURCE, cached, true)
 
   try {
     let url: string
 
     if (query.type === 'ip') {
-      const base = await getRDAPBaseForIP(query.normalised, kv)
+      const base = await getRDAPBaseForIP(query.normalised, db)
       url = `${base}ip/${query.normalised}`
     } else {
       const tld = query.normalised.split('.').pop() ?? ''
-      const base = await getRDAPBaseForDomain(tld, kv)
+      const base = await getRDAPBaseForDomain(tld, db)
         ?? 'https://rdap.verisign.com/com/v1/'
       url = `${base}domain/${query.normalised}`
     }
@@ -218,7 +218,7 @@ export async function fetchRDAP(
     )
     const data = query.type === 'ip' ? normaliseIP(json) : normaliseDomain(json)
 
-    await cachePut(kv, cacheKey, data, TTL.RDAP)
+    await cachePut(db, cacheKey, data, TTL.RDAP)
     return ok(SOURCE, data)
   } catch (err) {
     console.error(`[${SOURCE}] fetch failed for ${query.normalised}`, err)

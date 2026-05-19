@@ -42,6 +42,7 @@ import {
   recordBreakerSuccess,
   recordBreakerFailure,
 } from '../lib/ratelimit'
+import { cacheGet } from '../lib/cache'
 
 import { fetchInternetDB } from './sources/internetdb'
 import { fetchIPAPI }      from './sources/ipapi'
@@ -165,15 +166,16 @@ async function withBreaker<T>(
   kv: KVNamespace,
   fetcher: () => Promise<SourceResult<T>>,
   cacheKey?: string,
+  db?: D1Database,
 ): Promise<SourceResult<T>> {
   const state = await getBreakerState(source, kv)
   if (state === 'open') {
     // Try to serve stale cache rather than returning nothing
-    if (cacheKey) {
+    if (cacheKey && db) {
       try {
-        const raw = await kv.get(cacheKey)
-        if (raw) {
-          return { source, status: 'cached', data: JSON.parse(raw) as T }
+        const cached = await cacheGet<T>(db, cacheKey)
+        if (cached) {
+          return { source, status: 'cached', data: cached }
         }
       } catch {
         // Cache read failed — fall through to skipped
@@ -186,12 +188,13 @@ async function withBreaker<T>(
 
   if (result.status === 'error') {
     await recordBreakerFailure(source, kv)
-  } else if (result.status !== 'skipped') {
-    // ok, cached — non-failures. skipped is intentional and must NOT reset an
-    // open breaker (e.g. Feodo skipped for domain queries must not clear a
-    // breaker that tripped open due to real upstream failures).
+  } else if (result.status === 'ok') {
+    // Only record success on actual upstream calls, not cache hits.
+    // Cache hits don't touch the upstream — recording them inflates the
+    // request counter without providing useful signal, and wastes KV writes.
     await recordBreakerSuccess(source, kv)
   }
+  // 'cached' and 'skipped' → no KV write at all
 
   return result
 }
@@ -205,6 +208,7 @@ async function withBreaker<T>(
  */
 async function fetchCVEsBatched(
   cveIds: string[],
+  db: D1Database,
   kv: KVNamespace,
   nvdKey: string,
   forceRefresh: boolean,
@@ -217,7 +221,7 @@ async function fetchCVEsBatched(
     const batch = cveIds.slice(i, i + batchSize)
     const settled = await Promise.allSettled(
       batch.map(id =>
-        withBreaker('nvd', kv, () => fetchCVE(id, kv, nvdKey, forceRefresh, inflight)),
+        withBreaker('nvd', kv, () => fetchCVE(id, db, kv, nvdKey, forceRefresh, inflight)),
       ),
     )
     results.push(...settled)
@@ -296,7 +300,7 @@ export async function runLookup(
     // BGPView is called first in a short pre-flight to get the prefix list.
     // We use it to pick the first /24 host (.1) as the representative IP.
     const bgpPreflight = await withBreaker(
-      'bgpview', env.KV, () => fetchBGPView(query, env.KV),
+      'bgpview', env.KV, () => fetchBGPView(query, env.DB),
     )
     bgpPreflightResult = bgpPreflight
     const bgpData = (bgpPreflight.status === 'ok' || bgpPreflight.status === 'cached') 
@@ -353,7 +357,7 @@ export async function runLookup(
   if (query.type === 'domain' && ipQuery !== null) {
     const resolvedIPQuery = ipQuery  // Capture for closure
     const preflight = await withBreaker(
-      'internetdb', env.KV, () => fetchInternetDB(resolvedIPQuery, env.KV),
+      'internetdb', env.KV, () => fetchInternetDB(resolvedIPQuery, env.DB),
     )
     internetdbPreflight = preflight
     if (preflight.status === 'ok' || preflight.status === 'cached') {
@@ -402,22 +406,22 @@ export async function runLookup(
     // InternetDB: use pre-flight result when available (CDN detection ran it already)
     internetdbPreflight !== null
       ? Promise.resolve(internetdbPreflight)
-      : withBreaker('internetdb', env.KV, () => fetchInternetDB(effectiveIPQuery, env.KV)),
+      : withBreaker('internetdb', env.KV, () => fetchInternetDB(effectiveIPQuery, env.DB)),
 
     // ip-api: skip for CDN IPs — geo of a shared anycast edge node is meaningless.
     isCDNIP
       ? Promise.resolve({ source: 'ipapi', status: 'skipped' as const, data: null })
-      : withBreaker('ipapi', env.KV, () => fetchIPAPI(effectiveIPQuery, env.KV)),
+      : withBreaker('ipapi', env.KV, () => fetchIPAPI(effectiveIPQuery, env.DB)),
     // BGPView: always run even for CDN IPs — knowing the CDN's ASN/prefix is
     // genuinely useful (confirms Cloudflare/Fastly/Akamai proxying).
     // For ASN queries, reuse the pre-flight result to avoid a duplicate fetch.
     bgpPreflightResult !== null
       ? Promise.resolve(bgpPreflightResult)
-      : withBreaker('bgpview', env.KV, () => fetchBGPView(effectiveIPQuery, env.KV), `bgp:ip:${effectiveIPQuery.normalised}`),
+      : withBreaker('bgpview', env.KV, () => fetchBGPView(effectiveIPQuery, env.DB), `bgp:ip:${effectiveIPQuery.normalised}`, env.DB),
 
     // Domain + IP sources: always run regardless of CDN status
-    withBreaker('rdap',  env.KV, () => fetchRDAP(query, env.KV),  `rdap:domain:${query.normalised}`),
-    withBreaker('whois', env.KV, () => fetchWhois(query, env.KV), `whois:${query.normalised}`),
+    withBreaker('rdap',  env.KV, () => fetchRDAP(query, env.DB),  `rdap:domain:${query.normalised}`, env.DB),
+    withBreaker('whois', env.KV, () => fetchWhois(query, env.DB), `whois:${query.normalised}`, env.DB),
     // crtsh: certspotter acts as a permanent fallback at every level:
     //   1. crt.sh returns empty → certspotter supplements inside fetchCRTSH
     //   2. crt.sh errors        → certspotter runs standalone (below)
@@ -429,11 +433,11 @@ export async function runLookup(
     (async (): Promise<SourceResult<CertRecord[]>> => {
       const breakerState = await getBreakerState('crtsh', env.KV)
       if (breakerState === 'open') {
-        // Try stale cache first
+        // Try stale cache first (D1)
         try {
-          const raw = await env.KV.get(`crtsh:${query.normalised}`)
-          if (raw) {
-            return { source: 'crtsh', status: 'cached', data: JSON.parse(raw) as CertRecord[] }
+          const cached = await cacheGet<CertRecord[]>(env.DB, `crtsh:${query.normalised}`)
+          if (cached) {
+            return { source: 'crtsh', status: 'cached', data: cached }
           }
         } catch { /* fall through to certspotter */ }
         // Cache cold — run certspotter standalone; surface under 'crtsh' so
@@ -442,7 +446,7 @@ export async function runLookup(
         // successful certspotter fallbacks eventually clears the open state
         // and the breaker can recover before the 15-min KV TTL expires.
         console.warn('[lookup] crtsh breaker open + cache cold — running certspotter standalone')
-        const spotterResult = await fetchCertSpotter(query, env.KV)
+        const spotterResult = await fetchCertSpotter(query, env.DB)
         if (spotterResult.status === 'error') {
           await recordBreakerFailure('crtsh', env.KV)
         } else if (spotterResult.status !== 'skipped') {
@@ -452,32 +456,32 @@ export async function runLookup(
       }
 
       // Breaker closed / half-open — normal path
-      const crtResult = await fetchCRTSH(query, env.KV)
+      const crtResult = await fetchCRTSH(query, env.DB)
       if (crtResult.status === 'error') {
         await recordBreakerFailure('crtsh', env.KV)
         console.warn('[lookup] crtsh errored — trying certspotter standalone')
-        return fetchCertSpotter(query, env.KV)
+        return fetchCertSpotter(query, env.DB)
       }
       await recordBreakerSuccess('crtsh', env.KV)
       return crtResult
     })(),
-    withBreaker('passivedns', env.KV, () => fetchPassiveDNS(query, env.KV, ipQuery), `passivedns:${query.normalised}`),
+    withBreaker('passivedns', env.KV, () => fetchPassiveDNS(query, env.DB, ipQuery), `passivedns:${query.normalised}`, env.DB),
 
     // Robtex — skip for CDN IPs; also pass stale-cache key so open breaker still serves data
     isCDNIP
       ? Promise.resolve(skipped<ReturnType<typeof fetchRobtex> extends Promise<SourceResult<infer T>> ? T : never>('robtex'))
-      : withBreaker('robtex', env.KV, () => fetchRobtex(effectiveIPQuery, env.KV), `robtex:${effectiveIPQuery.normalised}`),
+      : withBreaker('robtex', env.KV, () => fetchRobtex(effectiveIPQuery, env.DB), `robtex:${effectiveIPQuery.normalised}`, env.DB),
 
     // Threat intel — IP path: skip for CDN IPs (shared anycast = noise)
     isCDNIP
       ? Promise.resolve({ source: 'urlhaus',       status: 'skipped' as const, data: null })
-      : withBreaker('urlhaus',       env.KV, () => fetchURLhaus(effectiveIPQuery, env.KV, env.ABUSECH_KEY)),
+      : withBreaker('urlhaus',       env.KV, () => fetchURLhaus(effectiveIPQuery, env.DB, env.ABUSECH_KEY)),
     isCDNIP
       ? Promise.resolve({ source: 'threatfox',     status: 'skipped' as const, data: null })
-      : withBreaker('threatfox',     env.KV, () => fetchThreatFox(effectiveIPQuery, env.KV, env.ABUSECH_KEY)),
+      : withBreaker('threatfox',     env.KV, () => fetchThreatFox(effectiveIPQuery, env.DB, env.ABUSECH_KEY)),
     isCDNIP
       ? Promise.resolve({ source: 'malwarebazaar', status: 'skipped' as const, data: null })
-      : withBreaker('malwarebazaar', env.KV, () => fetchMalwareBazaar(effectiveIPQuery, env.KV, env.ABUSECH_KEY)),
+      : withBreaker('malwarebazaar', env.KV, () => fetchMalwareBazaar(effectiveIPQuery, env.DB, env.ABUSECH_KEY)),
 
     // Feodo / SSLBL: D1 blocklists — skip for CDN IPs
     isCDNIP
@@ -489,13 +493,13 @@ export async function runLookup(
 
     // Threat intel — domain-string path (only for domain queries; always runs regardless of CDN)
     domainQuery
-      ? withBreaker('urlhaus',       env.KV, () => fetchURLhaus(domainQuery, env.KV, env.ABUSECH_KEY))
+      ? withBreaker('urlhaus',       env.KV, () => fetchURLhaus(domainQuery, env.DB, env.ABUSECH_KEY))
       : Promise.resolve({ source: 'urlhaus',       status: 'skipped' as const, data: null }),
     domainQuery
-      ? withBreaker('threatfox',     env.KV, () => fetchThreatFox(domainQuery, env.KV, env.ABUSECH_KEY))
+      ? withBreaker('threatfox',     env.KV, () => fetchThreatFox(domainQuery, env.DB, env.ABUSECH_KEY))
       : Promise.resolve({ source: 'threatfox',     status: 'skipped' as const, data: null }),
     domainQuery
-      ? withBreaker('malwarebazaar', env.KV, () => fetchMalwareBazaar(domainQuery, env.KV, env.ABUSECH_KEY))
+      ? withBreaker('malwarebazaar', env.KV, () => fetchMalwareBazaar(domainQuery, env.DB, env.ABUSECH_KEY))
       : Promise.resolve({ source: 'malwarebazaar', status: 'skipped' as const, data: null }),
   ])
 
@@ -608,15 +612,15 @@ export async function runLookup(
   const cveIds = (idbData?.vulns ?? []).slice(0, CVE_CONFIG.MAX_PER_LOOKUP)
 
   const vulns = await fetchCVEsBatched(
-    cveIds, env.KV, env.NVD_KEY, query.forceRefresh ?? false, inflight,
+    cveIds, env.DB, env.KV, env.NVD_KEY, query.forceRefresh ?? false, inflight,
   ) as PromiseSettledResult<SourceResult<CVEDetail>>[]
 
   // ── Layer 4: Bucket recon + Wayback — domain queries only ────────────────
   // Skip entirely for IP/ASN queries to avoid two no-op promise slots
   const [bucketsResult, waybackResult] = query.type === 'domain'
     ? await Promise.allSettled([
-        withBreaker('ghw',     env.KV, () => fetchGHWForQuery(query, env.KV, ghwRing)),
-        withBreaker('wayback', env.KV, () => fetchWayback(query, env.KV)),
+        withBreaker('ghw',     env.KV, () => fetchGHWForQuery(query, env.DB, ghwRing)),
+        withBreaker('wayback', env.KV, () => fetchWayback(query, env.DB)),
       ])
     : [
         { status: 'fulfilled' as const, value: skipped<BucketResult[]>('ghw') },

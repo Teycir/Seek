@@ -168,12 +168,12 @@ async function fetchFromCIRCL(cveId: string): Promise<CVEDetail> {
 
 export async function fetchOSV(
   cveId: string,
-  kv: KVNamespace,
+  db: D1Database,
 ): Promise<SourceResult<CVEDetail>> {
   const SOURCE = 'osv'
   const cacheKey = CacheKey.osv(cveId)
 
-  const cached = await cacheGet<CVEDetail>(kv, cacheKey)
+  const cached = await cacheGet<CVEDetail>(db, cacheKey)
   if (cached) return ok(SOURCE, cached, true)
 
   try {
@@ -204,7 +204,7 @@ export async function fetchOSV(
       source: 'osv',
     }
 
-    await cachePut(kv, cacheKey, data, TTL.CVE)
+    await cachePut(db, cacheKey, data, TTL.CVE)
     return ok(SOURCE, data)
   } catch (err) {
     console.error(`[${SOURCE}] fetch failed for ${cveId}`, err)
@@ -216,6 +216,7 @@ export async function fetchOSV(
 
 async function _fetchCVEFromUpstream(
   cveId: string,
+  db: D1Database,
   kv: KVNamespace,
   nvdKey: string,
   SOURCE: string,
@@ -236,7 +237,7 @@ async function _fetchCVEFromUpstream(
 
     if (needsCWE || needsRefs) {
       try {
-        const osvResult = await fetchOSV(cveId, kv)
+        const osvResult = await fetchOSV(cveId, db)
         if ((osvResult.status === 'ok' || osvResult.status === 'cached') && osvResult.data) {
           const merged: CVEDetail = { ...detail }
           if (needsCWE && osvResult.data.cwe && osvResult.data.cwe.length > 0) {
@@ -252,7 +253,7 @@ async function _fetchCVEFromUpstream(
       }
     }
 
-    await cachePut(kv, cacheKey, detail, TTL.CVE)
+    await cachePut(db, cacheKey, detail, TTL.CVE)
     return ok(detail.source, detail)
   } catch (err) {
     console.error(`[${SOURCE}] both NVD and CIRCL failed for ${cveId}`, err)
@@ -264,6 +265,7 @@ async function _fetchCVEFromUpstream(
 
 export async function fetchCVE(
   cveId: string,
+  db: D1Database,
   kv: KVNamespace,
   nvdKey: string,
   forceRefresh = false,
@@ -272,19 +274,14 @@ export async function fetchCVE(
   const SOURCE = 'nvd'
   const cacheKey = CacheKey.nvd(cveId)
 
-  const cached = await cacheGet<CVEDetail>(kv, cacheKey, forceRefresh)
+  const cached = await cacheGet<CVEDetail>(db, cacheKey, forceRefresh)
   if (cached) return ok(SOURCE, cached, true)
 
-  // Coalesce concurrent batch lookups that share the same CVE ID.
-  // The inflight map is batch-scoped (created once per /api/batch request)
-  // so only lookups within the same batch share a single outbound NVD/CIRCL
-  // fetch — no cross-request contamination.  Single-query /api/lookup calls
-  // pass no inflight map and follow the normal path unchanged.
   return inflight
     ? inflight.dedupe(`nvd:${cveId}`, () =>
-        _fetchCVEFromUpstream(cveId, kv, nvdKey, SOURCE, cacheKey),
+        _fetchCVEFromUpstream(cveId, db, kv, nvdKey, SOURCE, cacheKey),
       )
-    : _fetchCVEFromUpstream(cveId, kv, nvdKey, SOURCE, cacheKey)
+    : _fetchCVEFromUpstream(cveId, db, kv, nvdKey, SOURCE, cacheKey)
 }
 
 // Re-export for use in lookup.ts — keeps the import surface clean

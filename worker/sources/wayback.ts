@@ -16,12 +16,12 @@ const SOURCE = 'wayback'
 
 export async function fetchWayback(
   query: LookupQuery,
-  kv: KVNamespace,
+  db: D1Database,
 ): Promise<SourceResult<WaybackResult[]>> {
   if (query.type !== 'domain') return skipped(SOURCE)
 
   const cacheKey = CacheKey.wayback(query.normalised)
-  const cached = await cacheGet<WaybackResult[]>(kv, cacheKey, query.forceRefresh)
+  const cached = await cacheGet<WaybackResult[]>(db, cacheKey, query.forceRefresh)
   if (cached) return ok(SOURCE, cached, true)
 
   try {
@@ -52,7 +52,7 @@ export async function fetchWayback(
       SOURCE,
     )
     if (!Array.isArray(rows) || rows.length <= 1) {
-      await cachePut(kv, cacheKey, [], TTL.WAYBACK)
+      await cachePut(db, cacheKey, [], TTL.WAYBACK)
       return ok(SOURCE, [])
     }
 
@@ -64,7 +64,7 @@ export async function fetchWayback(
       mimeType:   row[3] ?? '',
     }))
 
-    await cachePut(kv, cacheKey, data, TTL.WAYBACK)
+    await cachePut(db, cacheKey, data, TTL.WAYBACK)
     return ok(SOURCE, data)
   } catch (err) {
     console.error(`[${SOURCE}] fetch failed for ${query.normalised}`, err)

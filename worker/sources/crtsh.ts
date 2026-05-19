@@ -77,12 +77,12 @@ async function fetchCerts(url: string): Promise<RawCert[]> {
 
 export async function fetchCRTSH(
   query: LookupQuery,
-  kv: KVNamespace,
+  db: D1Database,
 ): Promise<SourceResult<CertRecord[]>> {
   if (query.type !== 'domain') return skipped(SOURCE)
 
   const cacheKey = CacheKey.crtsh(query.normalised)
-  const cached = await cacheGet<CertRecord[]>(kv, cacheKey, query.forceRefresh)
+  const cached = await cacheGet<CertRecord[]>(db, cacheKey, query.forceRefresh)
   if (cached) return ok(SOURCE, cached, true)
 
   try {
@@ -130,7 +130,7 @@ export async function fetchCRTSH(
     // any gaps — results are merged and deduplicated by nameValue.
     if (data.length < MAX_RESULTS) {
       try {
-        const spotterResult = await fetchCertSpotter(query, kv)
+        const spotterResult = await fetchCertSpotter(query, db)
         if (
           spotterResult.status === 'ok' || spotterResult.status === 'cached'
         ) {
@@ -150,7 +150,7 @@ export async function fetchCRTSH(
       }
     }
 
-    await cachePut(kv, cacheKey, data, TTL.CERTS)
+    await cachePut(db, cacheKey, data, TTL.CERTS)
     return ok(SOURCE, data)
   } catch (err) {
     console.error(`[${SOURCE}] fetch failed for ${query.normalised}`, err)

@@ -41,12 +41,12 @@ interface CertSpotterIssuance {
 
 export async function fetchCertSpotter(
   query: LookupQuery,
-  kv: KVNamespace,
+  db: D1Database,
 ): Promise<SourceResult<CertRecord[]>> {
   if (query.type !== 'domain') return skipped(SOURCE)
 
   const cacheKey = `certspotter:${query.normalised}`
-  const cached = await cacheGet<CertRecord[]>(kv, cacheKey, query.forceRefresh)
+  const cached = await cacheGet<CertRecord[]>(db, cacheKey, query.forceRefresh)
   if (cached) return ok(SOURCE, cached, true)
 
   try {
@@ -107,7 +107,7 @@ export async function fetchCertSpotter(
       if (data.length >= MAX_RESULTS) break
     }
 
-    await cachePut(kv, cacheKey, data, TTL.CERTS)
+    await cachePut(db, cacheKey, data, TTL.CERTS)
     return ok(SOURCE, data)
   } catch (err) {
     console.error(`[${SOURCE}] fetch failed for ${query.normalised}`, err)
