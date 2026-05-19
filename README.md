@@ -79,7 +79,7 @@ $ curl "https://seekyou.seekyou.workers.dev/api/lookup?q=1.1.1.1"
     - [Edge-first, no Node.js](#edge-first-no-nodejs)
     - [Layered parallel execution](#layered-parallel-execution)
     - [Graceful degradation](#graceful-degradation)
-    - [Aggressive KV caching](#aggressive-kv-caching)
+    - [Split D1 + KV storage](#split-d1--kv-storage)
     - [Free-tier optimization](#free-tier-optimization)
     - [Fire-and-forget D1 writes](#fire-and-forget-d1-writes)
   - [Caching strategy](#caching-strategy)
@@ -237,12 +237,13 @@ Browser / curl
    └─► Layer 4 (parallel): GrayHatWarfare · Wayback (domain queries only)
                │
                ▼
-┌──────────────┐   ┌──────────────────┐
-│ KV           │   │ D1               │
-│ response     │   │ searches         │
-│ cache (TTL   │   │ saved_targets    │
-│ per source)  │   │                  │
-└──────────────┘   └──────────────────┘
+┌──────────────────────┐   ┌──────────────────────┐
+│ D1                   │   │ KV                   │
+│ source response cache│   │ rate limiting        │
+│ (TTL per source)     │   │ circuit breakers     │
+│ searches             │   │ concurrency counters │
+│ saved_targets        │   │                      │
+└──────────────────────┘   └──────────────────────┘
                │
                ▼
 ┌─────────────────────────────────────┐
@@ -261,7 +262,7 @@ Browser / curl
 
 Layers 1 and 2 fire simultaneously (12 sources in one `Promise.allSettled`). Layer 3 starts after Layer 1 settles — CVE IDs from InternetDB drive NVD enrichment, batched 10-at-a-time to avoid stampeding the API. Layer 4 fires in parallel with Layer 3 but only for domain queries; IP/ASN skip it entirely. Total wall-clock time ≈ max(Layer 1+2) + max(Layer 3+4).
 
-Force-refresh any query with `?refresh=1` to bypass the KV cache and pull live data from every upstream.
+Force-refresh any query with `?refresh=1` to bypass the D1 cache and pull live data from every upstream.
 
 ---
 
@@ -345,7 +346,7 @@ SeekYou/
 │       └── wayback.ts
 ├── lib/
 │   ├── types.ts                      # All TypeScript interfaces
-│   ├── cache.ts                      # KV cache wrapper (bypass on forceRefresh)
+│   ├── cache.ts                      # D1 cache wrapper (cacheGet/cachePut, bypass on forceRefresh)
 │   ├── config.ts                     # All magic numbers: TTLs, timeouts, limits
 │   ├── diff.ts                       # TargetDiff — typed change detection between snapshots
 │   ├── errors.ts                     # Unified error format + ErrorCode enum
@@ -401,8 +402,8 @@ Layers 1+2 fire together (12 sources). Layer 3 (CVE enrichment) only runs if Int
 ### Graceful degradation
 Every source is wrapped in a circuit breaker + try/catch. A failed source becomes an `{ status: 'error' }` badge. The page always renders.
 
-### Aggressive KV caching
-Each source has its own TTL (30 days for CVEs, 24h for BGP/RDAP, 1h for core geo/ports, 30m for abuse.ch). Cache hits bypass external calls entirely. `?refresh=1` threads `forceRefresh: true` through every fetcher to bypass cache on demand.
+### Split D1 + KV storage
+Source response caches live in **D1** (not KV) — values are written once, read occasionally, and are large enough that KV's write-quota cost adds up fast. **KV** is reserved exclusively for hot-path counters: rate limiting, circuit breakers, and in-flight concurrency tracking. Each source has its own TTL (30 days for CVEs, 24h for BGP/RDAP, 1h for core geo/ports, 30m for abuse.ch). `?refresh=1` threads `forceRefresh: true` through every fetcher to bypass the D1 cache on demand.
 
 ### Free-tier optimization
 GrayHatWarfare has 18-key rotation (1,800 req/day). NVD uses request batching (10 concurrent max). Feodo/SSLBL are fetched as bulk lists by the cron worker and cached in KV — zero per-query upstream cost.
@@ -414,38 +415,40 @@ GrayHatWarfare has 18-key rotation (1,800 req/day). NVD uses request batching (1
 
 ## Caching strategy
 
+Source responses are cached in **D1** with a manual TTL enforced via an `expires_at` column. KV is not used for response caching — it is reserved for rate limiting, circuit breakers, and in-flight concurrency counters where low-latency atomic increments matter.
+
 ```typescript
 // lib/cache.ts
 export async function cacheGet<T>(
-  kv: KVNamespace,
+  db: D1Database,
   key: string,
   bypass?: boolean,        // true when ?refresh=1
 ): Promise<T | null>
 
-export async function cacheSet<T>(
-  kv: KVNamespace,
+export async function cachePut<T>(
+  db: D1Database,
   key: string,
   value: T,
-  ttlSeconds?: number,
+  ttl: number,             // seconds
 ): Promise<void>
 ```
 
 Cache keys follow the pattern `source:normalised_query` — e.g. `internetdb:1.1.1.1`, `crtsh:example.com`.
 
-TTLs by source (from `lib/config.ts`):
+TTLs by source (from `lib/cache.ts`):
 
 | Source(s) | TTL |
 |---|---|
 | CVE (NVD/CIRCL) | 30 days |
 | Wayback | 7 days |
 | BGP, RDAP, Robtex | 24 hours |
-| crt.sh, PassiveDNS | 12 hours |
+| crt.sh, HackerTarget passive DNS | 12 hours |
 | GrayHatWarfare | 6 hours |
 | InternetDB, IPinfo | 1 hour |
 | Feodo, SSLBL (bulk) | 1 hour |
 | URLhaus, ThreatFox, MalwareBazaar | 30 minutes |
 
-Errors are never cached — a failed fetch always retries on the next request.
+Errors are never cached — a failed fetch always retries on the next request. Expired rows are returned as a miss and lazily overwritten; no background cleanup is needed.
 
 ---
 
