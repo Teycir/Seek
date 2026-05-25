@@ -781,3 +781,48 @@ GitHub: [@Teycir](https://github.com/Teycir)
 - [Internet Archive](https://web.archive.org) (Wayback Machine)
 
 ---
+
+## 🌐 Related Projects
+
+Explore more privacy-first and security tools:
+
+### Privacy & Encryption
+- **[Timeseal](https://github.com/Teycir/Timeseal)** - Time-locked encryption vault with Dead Man's Switch. AES-256 split-key crypto, ephemeral seals.
+- **[Sanctum](https://github.com/Teycir/Sanctum)** - Zero-trust encrypted vault with cryptographic plausible deniability. XChaCha20-Poly1305, Argon2id.
+- **[GhostChat](https://github.com/Teycir/GhostChat)** - True P2P encrypted chat via WebRTC. No servers, no storage, self-destructing messages.
+- **[xmrproof](https://github.com/Teycir/xmrproof)** - Monero payment verification, 100% client-side.
+- **[GhostReceipt](https://github.com/Teycir/GhostReceipt)** - Anonymous receipt generation with zero-knowledge proofs.
+
+### Security Tools
+- **[BurpAPISecuritySuite](https://github.com/Teycir/BurpAPISecuritySuite)** - Burp Suite extension for API security testing. 15 attack types, 108+ payloads, BOLA/IDOR detection.
+- **[Mcpwn](https://github.com/Teycir/Mcpwn)** - Automated security scanner for Model Context Protocol servers. Detects RCE, path traversal, prompt injection.
+- **[DiffCatcher](https://github.com/Teycir/DiffCatcher)** - Git repo discovery, diff capture, code element extraction.
+- **[HoneypotScan](https://github.com/Teycir/HoneypotScan)** - Honeypot detection service for security research.
+- **[CheckAPI](https://github.com/Teycir/CheckAPI)** - LLM API key validator for multiple providers. Privacy-first, client-side validation.
+
+### MCP Security Servers
+- **[burp-mcp-server](https://github.com/Teycir/burp-mcp-server)** - MCP server for Burp Suite Professional. Vulnerability scanning via AI assistants.
+- **[nuclei-mcp](https://github.com/Teycir/nuclei-mcp)** - MCP server for Nuclei. Multi-target scanning, severity filtering.
+- **[nmap-mcp](https://github.com/Teycir/nmap-mcp)** - MCP server for Nmap. Stealth recon, vuln/NSE scanning.
+- **[frida-mcp](https://github.com/Teycir/frida-mcp)** - MCP server for Frida. Dynamic instrumentation, SSL pinning bypass.
+
+---
+
+## 💼 Services Offered
+
+- 🔒 **Privacy-First Development** - P2P applications, encrypted communication, zero-knowledge systems
+- 🚀 **Web Application Development** - Full-stack development with Next.js, React, TypeScript
+- 🔧 **Edge Computing Solutions** - Cloudflare Workers, Pages, D1, KV, Durable Objects
+- 🛡️ **Security Tool Development** - Burp extensions, penetration testing tools, automation frameworks
+- 🤖 **AI Integration** - LLM-powered applications, intelligent automation, custom AI solutions
+- 🔍 **OSINT & Threat Intelligence** - Custom reconnaissance tools, threat feed aggregation, IOC correlation
+
+**Get in Touch**: [teycirbensoltane.tn](https://teycirbensoltane.tn) | Available for freelance projects and consulting
+
+---
+
+<div align="center">
+
+**Built with 💚 by [Teycir Ben Soltane](https://teycirbensoltane.tn)**
+
+</div>
