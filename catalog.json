@@ -1,0 +1,65 @@
+{
+  "name": "SeekYou",
+  "slug": "seekyou",
+  "version": "0.1.0",
+  "category": "security",
+  "tags": [
+    "threat-intelligence",
+    "osint",
+    "ip-lookup",
+    "domain-lookup",
+    "asn",
+    "cve",
+    "shodan",
+    "whois",
+    "bgp",
+    "ssl-certificates",
+    "vulnerability-scanner",
+    "infrastructure-research"
+  ],
+  "shortDescription": "Unified host intelligence across 15+ security sources",
+  "description": "SeekYou aggregates threat intelligence, infrastructure details, CVEs, and historical data for any IP, domain, or ASN from 15+ public sources including Shodan InternetDB, BGPView, crt.sh, NVD, Abuse.ch, and more.",
+  "author": "Teycir",
+  "license": "MIT",
+  "homepage": "https://swiy.co/seekyou",
+  "repository": "https://github.com/Teycir/SeekYou",
+  "apiEndpoint": "https://seekyou.seekyou.workers.dev/api/lookup",
+  "usage": {
+    "web": "https://swiy.co/seekyou?q=<target>",
+    "api": "https://seekyou.seekyou.workers.dev/api/lookup?q=<target>"
+  },
+  "features": [
+    "15+ threat intelligence sources",
+    "IP/domain/ASN lookup",
+    "CVE matching for exposed services",
+    "BGP routing information",
+    "SSL certificate transparency",
+    "Historical DNS records",
+    "Aggressive caching (D1 + KV)",
+    "Free tier on Cloudflare"
+  ],
+  "dataSources": [
+    "Shodan InternetDB",
+    "IPAPI",
+    "BGPView",
+    "RDAP",
+    "WHOIS",
+    "crt.sh",
+    "CertSpotter",
+    "PassiveDNS",
+    "Wayback Machine",
+    "Abuse.ch",
+    "Robtex",
+    "NVD",
+    "GreyHatWarfare"
+  ],
+  "supportedQueries": [
+    "IPv4",
+    "IPv6",
+    "Domain (FQDN)",
+    "ASN"
+  ],
+  "rateLimit": {
+    "free": "60 requests/minute per IP"
+  }
+}

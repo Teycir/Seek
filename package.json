@@ -1,7 +1,34 @@
 {
   "name": "seek",
-  "private": true,
   "version": "0.1.0",
+  "description": "Unified host intelligence across 15+ security sources — IP/domain/ASN lookup with threat intel, CVEs, infrastructure details",
+  "keywords": [
+    "security",
+    "threat-intelligence",
+    "osint",
+    "ip-lookup",
+    "domain-lookup",
+    "asn",
+    "cve",
+    "shodan",
+    "whois",
+    "bgp",
+    "ssl-certificates",
+    "vulnerability-scanner",
+    "infrastructure-research",
+    "cloudflare-workers"
+  ],
+  "homepage": "https://swiy.co/seekyou",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Teycir/SeekYou.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Teycir/SeekYou/issues"
+  },
+  "license": "MIT",
+  "author": "Teycir",
+  "private": true,
   "scripts": {
     "dev": "next dev",
     "build": "next build",
